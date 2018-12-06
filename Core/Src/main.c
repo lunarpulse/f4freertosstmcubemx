@@ -52,6 +52,7 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "usb_host.h"
+#include <stdlib.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -80,9 +81,45 @@ I2S_HandleTypeDef hi2s3;
 
 SPI_HandleTypeDef hspi1;
 
+UART_HandleTypeDef huart2;
+
+WWDG_HandleTypeDef hwwdg;
+
 osThreadId defaultTaskHandle;
+uint32_t defaultTaskBuffer[ 128 ];
+osStaticThreadDef_t defaultTaskControlBlock;
+osThreadId MediumPHandle;
+uint32_t FastTaskBuffer[ 128 ];
+osStaticThreadDef_t FastTaskControlBlock;
+osThreadId LowPHandle;
+osThreadId HighPHandle;
+uint32_t myTask04Buffer[ 128 ];
+osStaticThreadDef_t myTask04ControlBlock;
+osThreadId LowLowPHandle;
+uint32_t LowLowPBuffer[ 128 ];
+osStaticThreadDef_t LowLowPControlBlock;
+osMessageQId myQueue01Handle;
+uint8_t myQueue01Buffer[ 16 * sizeof( uint16_t ) ];
+osStaticMessageQDef_t myQueue01ControlBlock;
+osMutexId tXMutexHandle;
+osStaticMutexDef_t tXMutexControlBlock;
+osMutexId myMutex02Handle;
+osStaticMutexDef_t myMutex02ControlBlock;
+osSemaphoreId myBinarySem01Handle;
+osStaticSemaphoreDef_t myBinarySem01ControlBlock;
+osSemaphoreId myCountingSem01Handle;
+osStaticSemaphoreDef_t myCountingSem01ControlBlock;
 /* USER CODE BEGIN PV */
 
+xSemaphoreHandle xMutex; //univesal synchroniser container
+
+SemaphoreHandle_t xSemaphore = NULL;
+
+
+const char *msg1 = "SLowTaskLPR is running ******************************************\n";
+const char *msg2 = "FastTaskMPR is running ------------------------------------------\n";
+const char *msg3 = "SLowTaskMPR is running $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n";
+const char *msg4 = "FastTaskHPR is running ##########################################\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,10 +128,19 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_WWDG_Init(void);
+static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void const * argument);
+void StartTask02(void const * argument);
+void StartTask03(void const * argument);
+void StartTask04(void const * argument);
+void StartTask05(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
+void vTask1( void *pvParameters );
+void vTask2( void *pvParameters );
+static void prvNewPrintString( const portCHAR *pcString );
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -131,15 +177,37 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_I2C1_Init();
-  MX_I2S3_Init();
+  //MX_I2S3_Init();
   MX_SPI1_Init();
+  //MX_WWDG_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  srand( 609 );
 
   /* USER CODE END 2 */
 
+  /* Create the mutex(es) */
+  /* definition and creation of tXMutex */
+  osMutexStaticDef(tXMutex, &tXMutexControlBlock);
+  tXMutexHandle = osMutexCreate(osMutex(tXMutex));
+
+  /* definition and creation of myMutex02 */
+  osMutexStaticDef(myMutex02, &myMutex02ControlBlock);
+  myMutex02Handle = osMutexCreate(osMutex(myMutex02));
+
   /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
+  xMutex = xSemaphoreCreateMutex();
+
   /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* definition and creation of myBinarySem01 */
+  osSemaphoreStaticDef(myBinarySem01, &myBinarySem01ControlBlock);
+  myBinarySem01Handle = osSemaphoreCreate(osSemaphore(myBinarySem01), 1);
+
+  /* definition and creation of myCountingSem01 */
+  osSemaphoreStaticDef(myCountingSem01, &myCountingSem01ControlBlock);
+  myCountingSem01Handle = osSemaphoreCreate(osSemaphore(myCountingSem01), 2);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -151,12 +219,33 @@ int main(void)
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadStaticDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128, defaultTaskBuffer, &defaultTaskControlBlock);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of MediumP */
+  osThreadStaticDef(MediumP, StartTask02, osPriorityAboveNormal, 0, 128, FastTaskBuffer, &FastTaskControlBlock);
+  MediumPHandle = osThreadCreate(osThread(MediumP), (void*)msg1);
+
+  /* definition and creation of LowP */
+  osThreadDef(LowP, StartTask03, osPriorityBelowNormal, 0, 128);
+  LowPHandle = osThreadCreate(osThread(LowP), (void*)msg2);
+
+  /* definition and creation of HighP */
+  osThreadStaticDef(HighP, StartTask04, osPriorityHigh, 0, 128, myTask04Buffer, &myTask04ControlBlock);
+  HighPHandle = osThreadCreate(osThread(HighP), (void*)msg3);
+
+  /* definition and creation of LowLowP */
+  osThreadStaticDef(LowLowP, StartTask05, osPriorityLow, 0, 128, LowLowPBuffer, &LowLowPControlBlock);
+  LowLowPHandle = osThreadCreate(osThread(LowLowP), (void*)msg4);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
+
+  /* Create the queue(s) */
+  /* definition and creation of myQueue01 */
+  osMessageQStaticDef(myQueue01, 16, uint16_t, myQueue01Buffer, &myQueue01ControlBlock);
+  myQueue01Handle = osMessageCreate(osMessageQ(myQueue01), NULL);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -245,7 +334,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.ClockSpeed = 400000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -332,6 +421,69 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief WWDG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_WWDG_Init(void)
+{
+
+  /* USER CODE BEGIN WWDG_Init 0 */
+
+  /* USER CODE END WWDG_Init 0 */
+
+  /* USER CODE BEGIN WWDG_Init 1 */
+
+  /* USER CODE END WWDG_Init 1 */
+  hwwdg.Instance = WWDG;
+  hwwdg.Init.Prescaler = WWDG_PRESCALER_1;
+  hwwdg.Init.Window = 64;
+  hwwdg.Init.Counter = 64;
+  hwwdg.Init.EWIMode = WWDG_EWI_DISABLE;
+  if (HAL_WWDG_Init(&hwwdg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN WWDG_Init 2 */
+
+  /* USER CODE END WWDG_Init 2 */
 
 }
 
@@ -429,6 +581,65 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+void vTask1( void *pvParameters )
+{
+const char *msg= (char *) pvParameters;	/* As per most tasks, this task is implemented in an infinite loop. */
+	for( ;; )
+	{
+		/* Print out the name of this task. */
+		/* lets make the sema un-available */
+
+		prvNewPrintString(msg);
+
+		/* Delay for a period. */
+	    vTaskDelay(( rand() & 0x1FF ) );
+	}
+}
+/*-----------------------------------------------------------*/
+
+void vTask2( void *pvParameters )
+{
+const char *msg= (char *)pvParameters;
+
+	/* As per most tasks, this task is implemented in an infinite loop. */
+	for( ;; )
+	{
+		prvNewPrintString(msg);
+
+		/* Print out the name of this task. */
+		/* lets make the sema un-available */
+	  	//trace_printf( "%s\n",pcTaskName );
+		/* Delay for a period. */
+	    vTaskDelay(( rand() & 0x1FF ) );
+	}
+}
+
+static void prvNewPrintString( const portCHAR *pcString )
+{
+	/* The semaphore is created before the scheduler is started so already
+	exists by the time this task executes.
+
+	Attempt to take the semaphore, blocking indefinitely if the mutex is not
+	available immediately.  The call to xSemaphoreTake() will only return when
+	the semaphore has been successfully obtained so there is no need to check the
+	return value.  If any other delay period was used then the code must check
+	that xSemaphoreTake() returns pdTRUE before accessing the resource (in this
+	case standard out. */
+	 if( xSemaphoreTake( myMutex02Handle, portMAX_DELAY ) == pdTRUE )
+	{
+		//blinkLeds[2].turnOff();
+		for(int i = 0 ; i< 8 ;i ++){
+			while (pcString && *pcString){
+				while ( __HAL_UART_GET_FLAG (&huart2 , UART_FLAG_TXE ) == RESET);
+				USART2 ->DR = (*pcString++ & 0xff);
+			}
+		}
+
+		xSemaphoreGive( myMutex02Handle );
+	}
+	 else{
+	 }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -450,6 +661,84 @@ void StartDefaultTask(void const * argument)
     osDelay(1);
   }
   /* USER CODE END 5 */ 
+}
+
+/* USER CODE BEGIN Header_StartTask02 */
+/**
+* @brief Function implementing the FastTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask02 */
+void StartTask02(void const * argument)
+{
+  /* USER CODE BEGIN StartTask02 */
+	const char *msg= (char *) argument;
+  /* Infinite loop */
+  for(;;)
+  {
+	  prvNewPrintString(msg);
+
+    osDelay(( rand() & 0x1FF ));
+  }
+  /* USER CODE END StartTask02 */
+}
+
+/* USER CODE BEGIN Header_StartTask03 */
+/**
+* @brief Function implementing the SLOW thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask03 */
+void StartTask03(void const * argument)
+{
+  /* USER CODE BEGIN StartTask03 */
+	const char *msg= (char *) argument;
+  /* Infinite loop */
+  for(;;)
+  {
+	  prvNewPrintString(msg);
+
+    osDelay(( rand() & 0x1FF ));
+  }
+  /* USER CODE END StartTask03 */
+}
+
+/* USER CODE BEGIN Header_StartTask04 */
+/**
+* @brief Function implementing the HighP thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask04 */
+void StartTask04(void const * argument)
+{
+  /* USER CODE BEGIN StartTask04 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTask04 */
+}
+
+/* USER CODE BEGIN Header_StartTask05 */
+/**
+* @brief Function implementing the LowLowP thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask05 */
+void StartTask05(void const * argument)
+{
+  /* USER CODE BEGIN StartTask05 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END StartTask05 */
 }
 
 /**
