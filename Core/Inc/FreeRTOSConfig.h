@@ -84,7 +84,8 @@
  * See http://www.freertos.org/a00110.html.
  *----------------------------------------------------------*/
 
-/* USER CODE BEGIN Includes */   	      
+/* USER CODE BEGIN Includes */
+#define configUSE_TRACE_FACILITY		1
 /* Section where include file can be added */
 /* USER CODE END Includes */ 
 
@@ -169,5 +170,7 @@ standard names. */
 /* USER CODE BEGIN Defines */   	      
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 /* USER CODE END Defines */ 
-
+#if (configUSE_TRACE_FACILITY==1)
+#include "trcRecorder.h"
+#endif
 #endif /* FREERTOS_CONFIG_H */
